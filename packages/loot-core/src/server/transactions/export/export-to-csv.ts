@@ -2,6 +2,11 @@
 import { stringify as csvStringify } from 'csv-stringify/sync';
 
 import { aqlQuery } from '#server/aql';
+import * as db from '#server/db';
+import {
+  getEffectiveCurrency,
+  getStoredDecimalPlaces,
+} from '#shared/fx/currency';
 import { integerToAmount } from '#shared/util';
 
 const FORMULA_TRIGGERS = /^[=+\-@\t\r]/;
@@ -14,16 +19,34 @@ const csvStringifyOptions = {
   },
 };
 
+export async function getDefaultCurrencyCode(): Promise<string> {
+  const preference = await db.first<Pick<db.DbPreference, 'value'>>(
+    'SELECT value FROM preferences WHERE id = ?',
+    ['defaultCurrencyCode'],
+  );
+  return preference?.value ?? '';
+}
+
 export async function exportToCSV(
   transactions,
   accounts,
   categoryGroups,
   payees,
+  defaultCurrencyCode = '',
 ) {
   const accountNamesById = accounts.reduce((reduced, { id, name }) => {
     reduced[id] = name;
     return reduced;
   }, {});
+  const accountCurrenciesById = accounts.reduce((reduced, { id, currency }) => {
+    reduced[id] = currency ?? null;
+    return reduced;
+  }, {});
+  // Only exports with accounts in their own currency get a Currency column,
+  // so other exports stay exactly as they were
+  const hasCurrencies = transactions.some(
+    ({ account }) => accountCurrenciesById[account],
+  );
 
   const categoryNamesById = categoryGroups.reduce(
     (reduced, { name, categories: subCategories }) => {
@@ -51,16 +74,25 @@ export async function exportToCSV(
       amount,
       cleared,
       reconciled,
-    }) => ({
-      Account: accountNamesById[account],
-      Date: date,
-      Payee: payeeNamesById[payee],
-      Notes: notes,
-      Category: categoryNamesById[category],
-      Amount: amount == null ? 0 : integerToAmount(amount),
-      Cleared: cleared,
-      Reconciled: reconciled,
-    }),
+    }) => {
+      const currency = accountCurrenciesById[account];
+      return {
+        Account: accountNamesById[account],
+        Date: date,
+        Payee: payeeNamesById[payee],
+        Notes: notes,
+        Category: categoryNamesById[category],
+        Amount:
+          amount == null
+            ? 0
+            : integerToAmount(amount, getStoredDecimalPlaces(currency)),
+        ...(hasCurrencies && {
+          Currency: getEffectiveCurrency(currency, defaultCurrencyCode),
+        }),
+        Cleared: cleared,
+        Reconciled: reconciled,
+      };
+    },
   );
 
   return csvStringify(transactionsForExport, csvStringifyOptions);
@@ -82,11 +114,17 @@ export async function exportQueryToCSV(query) {
         { CategoryGroup: 'category.group.name' },
         { Category: 'category.name' },
         { Amount: 'amount' },
+        { AccountCurrency: 'account.currency' },
         { Cleared: 'cleared' },
         { Reconciled: 'reconciled' },
       ])
       .options({ splits: 'all' }),
   );
+
+  const hasCurrencies = transactions.some(trans => trans.AccountCurrency);
+  const defaultCurrencyCode = hasCurrencies
+    ? await getDefaultCurrencyCode()
+    : '';
 
   // initialize a map to allow splits to have correct number of split from
   const parentsChildCount: Map<number, number> = new Map();
@@ -104,6 +142,7 @@ export async function exportQueryToCSV(query) {
 
   // map final properties for export and grab the child count for splits from their parent transaction
   const transactionsForExport = transactions.map(trans => {
+    const decimalPlaces = getStoredDecimalPlaces(trans.AccountCurrency);
     return {
       Account: trans.Account,
       Date: trans.Date,
@@ -127,8 +166,16 @@ export async function exportQueryToCSV(query) {
         ? 0
         : trans.Amount == null
           ? 0
-          : integerToAmount(trans.Amount),
-      Split_Amount: trans.IsParent ? integerToAmount(trans.Amount) : 0,
+          : integerToAmount(trans.Amount, decimalPlaces),
+      Split_Amount: trans.IsParent
+        ? integerToAmount(trans.Amount, decimalPlaces)
+        : 0,
+      ...(hasCurrencies && {
+        Currency: getEffectiveCurrency(
+          trans.AccountCurrency,
+          defaultCurrencyCode,
+        ),
+      }),
       Cleared:
         trans.Reconciled === true
           ? 'Reconciled'

@@ -207,6 +207,33 @@ describe('Formula-based rule actions', () => {
     expect(transaction.amount).toBe(12345);
   });
 
+  it('should use the decimal places of the account currency', () => {
+    const yenAccount = {
+      id: 'yen',
+      name: 'Yen',
+      offbudget: 0,
+      closed: 0,
+      tombstone: 0,
+      sort_order: 0,
+      currency: 'JPY',
+    } as const;
+
+    const action = new Action('set', 'amount', null, {
+      formula: '=amount * 2',
+    });
+    const transaction = { amount: 1500, _account: yenAccount };
+    action.exec(transaction);
+    expect(transaction.amount).toBe(3000);
+
+    const read = new Action('set', 'notes', null, {});
+    expect(
+      read.executeFormulaSync('=amount', {
+        amount: 1500,
+        _account: yenAccount,
+      }),
+    ).toBe(1500);
+  });
+
   it('should apply a percentage to the amount field', () => {
     const action = new Action('set', 'amount', null, {
       formula: '=amount * 1.05',
