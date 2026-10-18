@@ -55,6 +55,26 @@ The same tab exports all your rates in this format, for example to move them to 
 
 Until a currency has a rate, its amounts count 1:1 against the default currency, the same way they added up before the feature existed. Such amounts are marked with ≈.
 
+## How Amounts Are Shown
+
+Amounts in the default currency show no symbol unless you choose otherwise in **Settings → General → Currency**: you already know they are your own money, the same way a price tag at home says $100 rather than CAD$100. Amounts in another currency always show its code, for example `USD$760.03`, so what is different stands out and can't be confused with default-currency amounts.
+
+Inside a foreign account, amounts are always entered in the account's currency. The column headers of the transaction table show it, for example **Payment (USD)**, and each transaction shows its amount in that currency; hover it to see its value in the default currency. On a phone, amounts and running balances of foreign accounts follow the display choice below.
+
+**Hide decimals** applies to amounts in the default currency, including accounts set to it explicitly. Amounts in other currencies always show their decimals.
+
+You can choose how the balances of foreign accounts are shown, for all accounts in settings or per account in its settings:
+
+- **Original currency**: `USD$760.03`
+- **Converted to default currency**: `1,053.62`
+- **Both**: `USD$760.03 (1,053.62)`
+
+Converted amounts are never editable. An amount marked with ≈ is approximate: there is no exchange rate for it yet, or only one from a later date.
+
+When you export transactions to a CSV file, amounts keep the currency of their account. Once an exported account has a currency of its own, the file gets a **Currency** column; other exports are unchanged.
+
 ## Known Limitations
 
+- Transfers between accounts in different currencies aren't linked. Services such as Wise or a bank each apply their own rate and fees, so record what left one account and what arrived in the other as two separate transactions. A transfer between currencies records the same number on both sides and is marked with a warning.
+- The amount of a rule's **set amount** action is in the default currency's decimal places. Formulas in rules use the account's currency.
 - Rates can't be fetched automatically yet.
