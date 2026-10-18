@@ -74,6 +74,7 @@ import {
 
 import { NoteInsertHashButton } from '#components/autocomplete/NoteInsertHashButton';
 import { NoteTagAutocomplete } from '#components/autocomplete/NoteTagAutocomplete';
+import { TransferRateDetails } from '#components/currency/TransferRateDetails';
 import { MobileBackButton } from '#components/mobile/MobileBackButton';
 import {
   FieldLabel,
@@ -637,6 +638,8 @@ type TransactionEditInnerProps = {
   payees: PayeeEntity[];
   dateFormat: string;
   transactions: TransactionEntity[];
+  // The transactions as stored, before any edit; none while adding
+  savedTransactions: TransactionEntity[];
   onSave: (transactions: TransactionEntity[]) => Promise<void>;
   onUpdate: <Field extends keyof TransactionEntity>(
     transaction: TransactionEntity,
@@ -661,6 +664,7 @@ const TransactionEditInner = memo<TransactionEditInnerProps>(
     payees,
     dateFormat,
     transactions: unserializedTransactions,
+    savedTransactions,
     onSave,
     onUpdate,
     onDelete,
@@ -675,7 +679,11 @@ const TransactionEditInner = memo<TransactionEditInnerProps>(
     const { t } = useTranslation();
     const navigate = useNavigate();
     const dispatch = useDispatch();
-    const { isForeignCurrency, getAccountCurrency } = useCurrencyFormatter();
+    const {
+      isEnabled: isMultiCurrencyEnabled,
+      isForeignCurrency,
+      getAccountCurrency,
+    } = useCurrencyFormatter();
     const [showHiddenCategories] = useLocalPref('budget.showHiddenCategories');
     const [upcomingLength = DEFAULT_UPCOMING_SCHEDULE_DAYS] = useSyncedPref(
       'upcomingScheduledTransactionLength',
@@ -1229,6 +1237,24 @@ const TransactionEditInner = memo<TransactionEditInnerProps>(
     const account = getAccount(transaction);
     const isOffBudget = account ? !!account.offbudget : false;
     const accountCurrency = account ? getAccountCurrency(account) : null;
+    // The transfer as saved: its details are hidden while the account or
+    // payee is changed, as they would describe a transfer about to change
+    const [savedTransaction] = savedTransactions;
+    const savedAccount = savedTransaction
+      ? getAccount(savedTransaction)
+      : undefined;
+    const savedTransferAccount = savedTransaction
+      ? getTransferAccount(savedTransaction)
+      : undefined;
+    const isCrossCurrencyTransfer =
+      isMultiCurrencyEnabled &&
+      !!savedTransaction?.transfer_id &&
+      savedTransaction.account === transaction.account &&
+      savedTransaction.payee === transaction.payee &&
+      !!savedAccount &&
+      !!savedTransferAccount &&
+      getAccountCurrency(savedAccount) !==
+        getAccountCurrency(savedTransferAccount);
     const amountLabel =
       accountCurrency && isForeignCurrency(accountCurrency)
         ? t('Amount ({{currency}})', { currency: accountCurrency })
@@ -1409,6 +1435,25 @@ const TransactionEditInner = memo<TransactionEditInnerProps>(
                 )
               }
             />
+            {isCrossCurrencyTransfer &&
+              savedAccount &&
+              savedTransferAccount && (
+                <View
+                  style={{
+                    marginTop: 6,
+                    marginLeft: styles.mobileEditingPadding,
+                    marginRight: styles.mobileEditingPadding,
+                    color: theme.pageTextLight,
+                    fontSize: 13,
+                  }}
+                >
+                  <TransferRateDetails
+                    transaction={savedTransaction}
+                    account={savedAccount}
+                    transferAccount={savedTransferAccount}
+                  />
+                </View>
+              )}
           </View>
 
           {!transaction.is_parent && (
@@ -2194,6 +2239,7 @@ function TransactionEditUnconnected({
     >
       <TransactionEditInner
         transactions={transactions}
+        savedTransactions={fetchedTransactions}
         isAdding={isAdding.current}
         categories={categories}
         accounts={accounts}
