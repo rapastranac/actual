@@ -10,6 +10,7 @@ import {
   getTestKeyError,
 } from '#shared/errors';
 import { getStoredDecimalPlaces } from '#shared/fx/currency';
+import { isSqlConversionEnabled } from '#shared/fx/sql';
 import * as monthUtils from '#shared/months';
 import { q } from '#shared/query';
 import {
@@ -164,6 +165,16 @@ function validateScheduleDate(date: RecurConfig | string) {
 function checkFileOpen() {
   if (!(prefs.getPrefs() || {}).id) {
     throw APIError('No budget file is open');
+  }
+}
+
+// Account currencies and exchange rates can only be set while multiple
+// currencies are on, which also needs a default currency they support
+function checkMultiCurrencyEnabled() {
+  if (!isSqlConversionEnabled()) {
+    throw APIError(
+      'Multiple currencies are not enabled: turn on the currency and multiCurrency feature flags and set a default currency with two decimal places',
+    );
   }
 }
 
@@ -697,6 +708,7 @@ handlers['api/account-create'] = withMutation(async function ({
   checkFileOpen();
   if (account.currency != null) {
     accountModel.validateCurrency(account.currency);
+    checkMultiCurrencyEnabled();
   }
   const decimalPlaces = getStoredDecimalPlaces(account.currency);
   return handlers['account-create']({
@@ -721,6 +733,9 @@ handlers['api/account-update'] = withMutation(async function ({ id, fields }) {
   // already has is left as it is
   const isCurrencyChanged =
     currency !== undefined && (await checkAccountCurrencyChange(id, currency));
+  if (isCurrencyChanged) {
+    checkMultiCurrencyEnabled();
+  }
   return db.updateAccount({
     id,
     ...otherFields,
@@ -799,6 +814,7 @@ handlers['api/exchange-rate-create'] = withMutation(async function ({
   exchangeRate,
 }) {
   checkFileOpen();
+  checkMultiCurrencyEnabled();
   if (exchangeRate == null || typeof exchangeRate !== 'object') {
     throw APIError('exchangeRate is required');
   }
@@ -815,6 +831,7 @@ handlers['api/exchange-rate-update'] = withMutation(async function ({
   fields,
 }) {
   checkFileOpen();
+  checkMultiCurrencyEnabled();
   if (fields == null || typeof fields !== 'object') {
     throw APIError('fields is required');
   }
