@@ -1,4 +1,9 @@
-import { convertAmount, convertTotal, convertWithRates } from './convert';
+import {
+  convertAmount,
+  convertTotal,
+  convertWithRates,
+  getEffectiveRate,
+} from './convert';
 import { buildRateIndex } from './rates';
 import type { RateRecord } from './rates';
 
@@ -248,5 +253,26 @@ describe('convertWithRates', () => {
     expect(() => convertWithRates(1000000000, 'EUR', 'CAD', absurd)).toThrow(
       /safeNumber/,
     );
+  });
+});
+
+describe('getEffectiveRate', () => {
+  it.each([
+    // CA$1,500.00 left, USD$1,000.00 arrived
+    [-150000, 'CAD', 100000, 'USD', 1000 / 1500],
+    [100000, 'USD', -150000, 'CAD', 1.5],
+    // ¥15,000 left, USD$100.00 arrived
+    [-15000, 'JPY', 10000, 'USD', 100 / 15000],
+    [-10000, 'USD', 15000, 'JPY', 150],
+    [-150000, 'CAD', 0, 'USD', 0],
+  ])('%i %s for %i %s', (fromAmount, from, toAmount, to, expected) => {
+    expect(getEffectiveRate(fromAmount, from, toAmount, to)).toBeCloseTo(
+      expected,
+      10,
+    );
+  });
+
+  it('is unknown when nothing left', () => {
+    expect(getEffectiveRate(0, 'CAD', 100000, 'USD')).toBeNull();
   });
 });
