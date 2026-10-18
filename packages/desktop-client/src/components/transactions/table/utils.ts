@@ -1,10 +1,16 @@
 import { evalArithmetic } from '@actual-app/core/shared/arithmetic';
+import { getDecimalPlaces } from '@actual-app/core/shared/currencies';
 import { currentDay } from '@actual-app/core/shared/months';
 import {
+  amountToCurrencyInteger,
   amountToInteger,
+  integerToCurrency,
   integerToCurrencyWithDecimal,
 } from '@actual-app/core/shared/util';
-import type { CurrencyAmount } from '@actual-app/core/shared/util';
+import type {
+  CurrencyAmount,
+  IntegerAmount,
+} from '@actual-app/core/shared/util';
 import type {
   AccountEntity,
   CategoryEntity,
@@ -28,9 +34,34 @@ export type TransactionUpdateFunction = <T extends keyof SerializedTransaction>(
   value: SerializedTransaction[T],
 ) => void;
 
+// An amount as it is edited. Amounts of accounts with their own currency are
+// stored with its decimal places. Hiding decimals is chosen for the default
+// currency, so amounts in another currency always show all of theirs.
+function formatEditAmount(
+  amount: IntegerAmount,
+  currencyCode: string | undefined,
+  isForeignCurrency: boolean,
+) {
+  if (currencyCode === undefined || isForeignCurrency) {
+    return integerToCurrencyWithDecimal(amount, currencyCode);
+  }
+
+  // Like an account without a currency: decimals are kept when there are
+  // some, otherwise shown or hidden as the budget's format says
+  const decimalPlaces = getDecimalPlaces(currencyCode);
+  return amount % 10 ** decimalPlaces !== 0
+    ? integerToCurrencyWithDecimal(amount, currencyCode)
+    : integerToCurrency(amount, undefined, decimalPlaces);
+}
+
+// `currencyCode` is given for accounts with their own currency, whose
+// amounts use that currency's decimal places. `isForeignCurrency` says
+// whether it is another currency than the default one.
 export function serializeTransaction(
   transaction: TransactionEntity,
   showZeroInDeposit?: boolean,
+  currencyCode?: string,
+  isForeignCurrency = currencyCode !== undefined,
 ): SerializedTransaction {
   const { amount, date: originalDate } = transaction;
 
@@ -61,14 +92,21 @@ export function serializeTransaction(
   return {
     ...transaction,
     date,
-    debit: debit != null ? integerToCurrencyWithDecimal(debit) : '',
-    credit: credit != null ? integerToCurrencyWithDecimal(credit) : '',
+    debit:
+      debit != null
+        ? formatEditAmount(debit, currencyCode, isForeignCurrency)
+        : '',
+    credit:
+      credit != null
+        ? formatEditAmount(credit, currencyCode, isForeignCurrency)
+        : '',
   };
 }
 
 export function deserializeTransaction(
   transaction: SerializedTransaction,
   originalTransaction: TransactionEntity,
+  currencyCode?: string,
 ) {
   const { debit, credit, date: originalDate, ...realTransaction } = transaction;
 
@@ -80,10 +118,14 @@ export function deserializeTransaction(
     amount = evalArithmetic(credit, null);
   }
 
-  amount =
-    amount != null
-      ? amountToInteger(amount)
-      : (realTransaction.amount ?? originalTransaction.amount);
+  if (amount != null) {
+    amount =
+      currencyCode !== undefined
+        ? amountToCurrencyInteger(amount, currencyCode)
+        : amountToInteger(amount);
+  } else {
+    amount = realTransaction.amount ?? originalTransaction.amount;
+  }
   let date = originalDate;
   if (date == null) {
     date = originalTransaction.date || currentDay();

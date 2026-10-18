@@ -2,6 +2,7 @@ import type { FocusEvent, ReactNode } from 'react';
 import { memo, useEffect, useState } from 'react';
 
 import { styles } from '@actual-app/components/styles';
+import { getDecimalPlaces } from '@actual-app/core/shared/currencies';
 import { amountToInteger, integerToAmount } from '@actual-app/core/shared/util';
 
 import { AmountInput as LegacyAmountInput } from '#components/util/AmountInput';
@@ -20,10 +21,13 @@ export type SplitAmountInputProps = {
   keyboardHeader?: ReactNode;
   autoFocus?: boolean;
   disabled?: boolean;
+  // The currency of the account, when it has one of its own
+  currencyCode?: string;
 };
 
 export const SplitAmountInput = memo(function SplitAmountInput({
   autoFocus = false,
+  currencyCode,
   disabled,
   negate = false,
   onBlur,
@@ -67,7 +71,12 @@ export const SplitAmountInput = memo(function SplitAmountInput({
 
   return (
     <LegacyAmountInput
-      autoDecimals={String(hideFraction) !== 'true'}
+      // Typed digits only gain decimals when the currency has any
+      autoDecimals={
+        currencyCode === undefined
+          ? String(hideFraction) !== 'true'
+          : getDecimalPlaces(currencyCode) > 0
+      }
       disabled={disabled}
       focused={focused}
       inputStyle={{

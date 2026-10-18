@@ -35,6 +35,7 @@ import { theme } from '@actual-app/components/theme';
 import { View } from '@actual-app/components/view';
 import { send } from '@actual-app/core/platform/client/connection';
 import { DEFAULT_MAX_DISTANCE_METERS } from '@actual-app/core/shared/constants';
+import { getStoredDecimalPlaces } from '@actual-app/core/shared/fx/currency';
 import { calculateDistance } from '@actual-app/core/shared/location-utils';
 import * as monthUtils from '@actual-app/core/shared/months';
 import { q } from '@actual-app/core/shared/query';
@@ -93,6 +94,7 @@ import {
 } from '#components/transactions/table/utils';
 import { useAccounts } from '#hooks/useAccounts';
 import { useCategories } from '#hooks/useCategories';
+import { useCurrencyFormatter } from '#hooks/useCurrencyFormatter';
 import { useDateFormat } from '#hooks/useDateFormat';
 import { useLocalPref } from '#hooks/useLocalPref';
 import { useLocationPermission } from '#hooks/useLocationPermission';
@@ -125,15 +127,25 @@ function getFieldName(transactionId: TransactionEntity['id'], field: string) {
   return `${field}-${transactionId}`;
 }
 
+function getAmountDecimalPlaces(
+  transaction: Pick<TransactionEntity, 'account'>,
+  accounts: readonly AccountEntity[],
+) {
+  return getStoredDecimalPlaces(
+    accounts.find(account => account.id === transaction.account)?.currency,
+  );
+}
+
 function serializeTransaction(
   transaction: TransactionEntity,
   dateFormat: string,
+  decimalPlaces = 2,
 ) {
   const { date, amount } = transaction;
   return {
     ...transaction,
     date: formatDate(parseISO(date), dateFormat),
-    amount: integerToAmount(amount || 0),
+    amount: integerToAmount(amount || 0, decimalPlaces),
   };
 }
 
@@ -141,6 +153,7 @@ function deserializeTransaction(
   transaction: TransactionEntity,
   originalTransaction: TransactionEntity | null,
   dateFormat: string,
+  decimalPlaces = 2,
 ) {
   const { amount, date: originalDate, ...realTransaction } = transaction;
 
@@ -174,7 +187,11 @@ function deserializeTransaction(
       monthUtils.currentDay();
   }
 
-  return { ...realTransaction, date, amount: amountToInteger(amount || 0) };
+  return {
+    ...realTransaction,
+    date,
+    amount: amountToInteger(amount || 0, decimalPlaces),
+  };
 }
 
 export function lookupName(items: CategoryEntity[], id?: CategoryEntity['id']) {
@@ -418,6 +435,8 @@ type ChildTransactionEditProps = {
     transaction: TransactionEntity,
   ) => AccountEntity | undefined;
   isOffBudget: boolean;
+  // The currency of the account, when it has one of its own
+  currencyCode?: string;
   isBudgetTransfer: (transaction: TransactionEntity) => boolean;
   onEditField: (
     id: TransactionEntity['id'],
@@ -444,6 +463,7 @@ const ChildTransactionEdit = forwardRef<
       getPayee,
       getTransferAccount,
       isOffBudget,
+      currencyCode,
       isBudgetTransfer,
       onEditField,
       onUpdate,
@@ -506,6 +526,7 @@ const ChildTransactionEdit = forwardRef<
             <FieldLabel title={t('Amount')} style={{ padding: 0 }} />
             <SplitAmountInput
               keyboardHeader={keyboardHeader}
+              currencyCode={currencyCode}
               disabled={
                 !!editingField &&
                 editingField !== getFieldName(transaction.id, 'amount')
@@ -653,6 +674,7 @@ const TransactionEditInner = memo<TransactionEditInnerProps>(
     const { t } = useTranslation();
     const navigate = useNavigate();
     const dispatch = useDispatch();
+    const { isForeignCurrency, getAccountCurrency } = useCurrencyFormatter();
     const [showHiddenCategories] = useLocalPref('budget.showHiddenCategories');
     const [upcomingLength = DEFAULT_UPCOMING_SCHEDULE_DAYS] = useSyncedPref(
       'upcomingScheduledTransactionLength',
@@ -660,9 +682,13 @@ const TransactionEditInner = memo<TransactionEditInnerProps>(
     const transactions = useMemo(
       () =>
         unserializedTransactions.map(t =>
-          serializeTransaction(t, dateFormat),
+          serializeTransaction(
+            t,
+            dateFormat,
+            getAmountDecimalPlaces(t, accounts),
+          ),
         ) || [],
-      [unserializedTransactions, dateFormat],
+      [unserializedTransactions, dateFormat, accounts],
     );
     const { data: { grouped: categoryGroups } = { grouped: [] } } =
       useCategories();
@@ -1186,6 +1212,11 @@ const TransactionEditInner = memo<TransactionEditInnerProps>(
 
     const account = getAccount(transaction);
     const isOffBudget = account ? !!account.offbudget : false;
+    const accountCurrency = account ? getAccountCurrency(account) : null;
+    const amountLabel =
+      accountCurrency && isForeignCurrency(accountCurrency)
+        ? t('Amount ({{currency}})', { currency: accountCurrency })
+        : t('Amount');
     const title = getPrettyPayee({
       t,
       transaction,
@@ -1243,9 +1274,10 @@ const TransactionEditInner = memo<TransactionEditInnerProps>(
               alignItems: 'center',
             }}
           >
-            <FieldLabel title={t('Amount')} flush style={{ marginBottom: 0 }} />
+            <FieldLabel title={amountLabel} flush style={{ marginBottom: 0 }} />
             <AmountInput
               value={transaction.amount}
+              currencyCode={account?.currency ?? undefined}
               negate
               disabled={
                 !!editingField &&
@@ -1404,6 +1436,7 @@ const TransactionEditInner = memo<TransactionEditInnerProps>(
                 };
               }}
               isOffBudget={isOffBudget}
+              currencyCode={account?.currency ?? undefined}
               getCategory={getCategory}
               getPayee={getPayee}
               getTransferAccount={getTransferAccount}
@@ -1744,6 +1777,7 @@ function TransactionEditUnconnected({
         serializedTransaction,
         null,
         dateFormat,
+        getAmountDecimalPlaces(serializedTransaction, accounts),
       );
 
       // Run the rules to auto-fill in any data. Right now we only do
@@ -1896,7 +1930,7 @@ function TransactionEditUnconnected({
         }
       }
     },
-    [dateFormat, isLocationGranted],
+    [dateFormat, isLocationGranted, accounts],
   );
 
   const onSave = useCallback(
@@ -2005,11 +2039,15 @@ function TransactionEditUnconnected({
     }
 
     const updated = {
-      ...serializeTransaction(transaction, dateFormat),
+      ...serializeTransaction(
+        transaction,
+        dateFormat,
+        getAmountDecimalPlaces(transaction, accounts),
+      ),
       payee: nearestPayee.id,
     };
     void onUpdate(updated, 'payee');
-  }, [transactions, nearestPayee, onUpdate, dateFormat]);
+  }, [transactions, nearestPayee, onUpdate, dateFormat, accounts]);
 
   if (accounts.length === 0) {
     return (

@@ -632,6 +632,17 @@ describe('Transactions', () => {
     });
   });
 
+  test('amounts follow the decimal places of accounts loaded later', async () => {
+    const { container, updateProps } = renderTransactions({ accounts: [] });
+    // ¥2,777 is stored as 2777, without decimal places
+    updateProps({ accounts: [{ ...accounts[0], currency: 'JPY' }] });
+
+    const input = await editField(container, 'debit', 0);
+
+    // Rather than ¥27.77, as read before the account was known
+    expect(input.value).toBe('2,777');
+  });
+
   describe('Group column', () => {
     test('group column is hidden by default', () => {
       const { container } = renderTransactions();
