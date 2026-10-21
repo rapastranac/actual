@@ -27,11 +27,11 @@ jobs:
       matrix:
         include:
           - os: ubuntu-24.04
-            runner: depot-ubuntu-24.04-8
+            runner: ubuntu-24.04
           - os: windows-latest
-            runner: depot-windows-2022-8
+            runner: windows-2022
           - os: macos-latest
-            runner: depot-macos-latest
+            runner: macos-latest
     runs-on: ${{ matrix.runner }}
     environment: release
     if: github.event.repository.fork == false
@@ -107,6 +107,7 @@ jobs:
           name: Actual-linux-x86_64.AppImage
           if-no-files-found: ignore
           path: packages/desktop-electron/dist/Actual-linux-x86_64.AppImage
+          retention-days: 7
 
       - name: Upload Linux arm64 AppImage
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -114,6 +115,7 @@ jobs:
           name: Actual-linux-arm64.AppImage
           if-no-files-found: ignore
           path: packages/desktop-electron/dist/Actual-linux-arm64.AppImage
+          retention-days: 7
 
       - name: Upload Windows x32 exe
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -121,6 +123,7 @@ jobs:
           name: Actual-windows-ia32.exe
           if-no-files-found: ignore
           path: packages/desktop-electron/dist/Actual-windows-ia32.exe
+          retention-days: 7
 
       - name: Upload Windows x64 exe
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -128,6 +131,7 @@ jobs:
           name: Actual-windows-x64.exe
           if-no-files-found: ignore
           path: packages/desktop-electron/dist/Actual-windows-x64.exe
+          retention-days: 7
 
       - name: Upload Windows arm64 exe
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -135,6 +139,7 @@ jobs:
           name: Actual-windows-arm64.exe
           if-no-files-found: ignore
           path: packages/desktop-electron/dist/Actual-windows-arm64.exe
+          retention-days: 7
 
       - name: Upload Mac x64 dmg
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -142,6 +147,7 @@ jobs:
           name: Actual-mac-x64.dmg
           if-no-files-found: ignore
           path: packages/desktop-electron/dist/Actual-mac-x64.dmg
+          retention-days: 7
 
       - name: Upload Mac arm64 dmg
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -149,6 +155,7 @@ jobs:
           name: Actual-mac-arm64.dmg
           if-no-files-found: ignore
           path: packages/desktop-electron/dist/Actual-mac-arm64.dmg
+          retention-days: 7
 
       - name: Upload Windows Store Build
         if: ${{ startsWith(matrix.os, 'windows') }}
@@ -157,3 +164,4 @@ jobs:
           name: actual-electron-${{ matrix.os }}-appx
           path: |
             packages/desktop-electron/dist/*.appx
+          retention-days: 7

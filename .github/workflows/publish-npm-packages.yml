@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   build-and-pack:
-    runs-on: depot-ubuntu-latest
+    runs-on: ubuntu-latest
     name: Build and pack npm packages
     if: github.event_name == 'push' || (github.event.repository.fork == false)
     steps:
@@ -88,6 +88,7 @@ jobs:
             packages/sync-server/@actual-app/sync-server.tgz
             packages/api/@actual-app/api.tgz
             packages/cli/@actual-app/cli.tgz
+          retention-days: 7
 
   publish:
     # must use GitHub hosted runners as NPM will not allow publishing from

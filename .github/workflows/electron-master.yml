@@ -59,11 +59,11 @@ jobs:
       matrix:
         include:
           - os: ubuntu-24.04
-            runner: depot-ubuntu-24.04-8
+            runner: ubuntu-24.04
           - os: windows-2022
-            runner: depot-windows-2022-8
+            runner: windows-2022
           - os: macos-latest
-            runner: depot-macos-latest
+            runner: macos-latest
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -131,6 +131,7 @@ jobs:
             packages/desktop-electron/dist/*.exe
             !packages/desktop-electron/dist/Actual-windows.exe
             packages/desktop-electron/dist/*.AppImage
+          retention-days: 7
       - name: Upload Windows Store Build
         if: ${{ startsWith(matrix.os, 'windows') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -138,6 +139,7 @@ jobs:
           name: actual-electron-${{ matrix.os }}-appx
           path: |
             packages/desktop-electron/dist/*.appx
+          retention-days: 7
       - name: Add to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
