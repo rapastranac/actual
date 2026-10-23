@@ -1048,6 +1048,39 @@ describe('SimpleFin batch sync', () => {
     },
   );
 
+  test('stores the bank balance in the decimal places of the account currency', async () => {
+    const providerAccountId = 'sf-account-1';
+    const acctId = await db.insertAccount({
+      id: 'acct-1',
+      account_id: providerAccountId,
+      name: 'Yen account',
+      account_sync_source: 'simpleFin',
+      currency: 'JPY',
+    });
+    await db.insertTransaction({
+      account: acctId,
+      amount: 1000,
+      date: '2017-10-01',
+    });
+    mockSimpleFinTransactions({
+      [providerAccountId]: {
+        transactions: { all: [], booked: [], pending: [] },
+        balances: [],
+        // Banks report balances with two decimal places: ¥1500
+        startingBalance: 150000,
+      },
+      errors: {},
+    });
+
+    await accountsApp.handlers['simplefin-batch-sync']({ ids: [acctId] });
+
+    const account = await db.first<Pick<db.DbAccount, 'balance_current'>>(
+      'SELECT balance_current FROM accounts WHERE id = ?',
+      [acctId],
+    );
+    expect(account?.balance_current).toBe(1500);
+  });
+
   test('does not emit transaction CRDT messages when provider category appears later', async () => {
     const providerAccountId = 'sf-account-1';
     const acctId = await db.insertAccount({

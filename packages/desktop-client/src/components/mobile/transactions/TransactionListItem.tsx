@@ -35,6 +35,7 @@ import { TransferDirectionIcon } from '#components/common/TransferDirectionIcon'
 import { useAccount } from '#hooks/useAccount';
 import { useCachedSchedules } from '#hooks/useCachedSchedules';
 import { useCategories } from '#hooks/useCategories';
+import { useCurrencyFormatter } from '#hooks/useCurrencyFormatter';
 import { useDisplayPayee } from '#hooks/useDisplayPayee';
 import { usePayee } from '#hooks/usePayee';
 import { NotesTagFormatter } from '#notes/NotesTagFormatter';
@@ -93,6 +94,15 @@ export function TransactionListItem({
   const displayPayee = useDisplayPayee({ transaction });
 
   const account = useAccount(transaction?.account || '');
+  const { isForeignCurrency, getAccountCurrency, formatAccountAmount } =
+    useCurrencyFormatter();
+  // Transactions of accounts in another currency show it, e.g. USD$7.60.
+  // Touch screens can't hover to see the converted value as on desktop, so
+  // the account's display mode decides, like for its balance.
+  const formatRowAmount = (value: number) =>
+    account && isForeignCurrency(getAccountCurrency(account))
+      ? formatAccountAmount(value, account, { date: transaction?.date })
+      : integerToCurrency(value);
   const transferAccount = useAccount(payee?.transfer_acct || '');
   const isPreview = isPreviewId(transaction?.id || '');
   const { schedules = [] } = useCachedSchedules();
@@ -319,7 +329,7 @@ export function TransactionListItem({
                   ...textStyle,
                 }}
               >
-                {integerToCurrency(amount)}
+                {formatRowAmount(amount)}
               </Text>
               {showRunningBalance && runningBalance !== undefined && (
                 <Text
@@ -334,7 +344,7 @@ export function TransactionListItem({
                     }),
                   }}
                 >
-                  {integerToCurrency(runningBalance)}
+                  {formatRowAmount(runningBalance)}
                 </Text>
               )}
             </View>

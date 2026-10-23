@@ -10,6 +10,7 @@ import {
   CustomFunctionsPlugin,
   customFunctionsTranslations,
 } from '#shared/formulas/customFunctions';
+import { getStoredDecimalPlaces } from '#shared/fx/currency';
 import { currentDay, format, parseDate } from '#shared/months';
 import { FIELD_TYPES } from '#shared/rules';
 import { amountToInteger, integerToAmount } from '#shared/util';
@@ -41,6 +42,12 @@ const MONETARY_FORMULA_VARIABLES: ReadonlySet<string> = new Set([
   'balance',
   'parent_amount',
 ]);
+
+function getAmountDecimalPlaces(
+  transaction: Partial<Pick<TransactionForRules, '_account'>>,
+) {
+  return getStoredDecimalPlaces(transaction._account?.currency);
+}
 
 export class Action {
   field;
@@ -121,7 +128,10 @@ export class Action {
                   const error = `Formula for "${this.field}" must produce a numeric value. Got: ${JSON.stringify(result)}`;
                   object._ruleErrors.push(error);
                 } else {
-                  object[this.field] = amountToInteger(numValue);
+                  object[this.field] = amountToInteger(
+                    numValue,
+                    getAmountDecimalPlaces(object),
+                  );
                 }
                 break;
               }
@@ -228,7 +238,10 @@ export class Action {
                   `Formula for split amount must produce a numeric value. Got: ${JSON.stringify(result)}`,
                 );
               } else {
-                object.amount = amountToInteger(numValue);
+                object.amount = amountToInteger(
+                  numValue,
+                  getAmountDecimalPlaces(object),
+                );
               }
             } catch (err) {
               object._ruleErrors.push(
@@ -365,7 +378,10 @@ export class Action {
           typeof rawValue === 'number'
         ) {
           // Formulas work in amounts; the transaction stores integers.
-          cellValue = integerToAmount(rawValue);
+          cellValue = integerToAmount(
+            rawValue,
+            getAmountDecimalPlaces(transaction),
+          );
         } else {
           cellValue = rawValue;
         }

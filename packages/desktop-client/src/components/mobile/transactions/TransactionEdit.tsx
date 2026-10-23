@@ -35,6 +35,7 @@ import { theme } from '@actual-app/components/theme';
 import { View } from '@actual-app/components/view';
 import { send } from '@actual-app/core/platform/client/connection';
 import { DEFAULT_MAX_DISTANCE_METERS } from '@actual-app/core/shared/constants';
+import { getStoredDecimalPlaces } from '@actual-app/core/shared/fx/currency';
 import { calculateDistance } from '@actual-app/core/shared/location-utils';
 import * as monthUtils from '@actual-app/core/shared/months';
 import { q } from '@actual-app/core/shared/query';
@@ -73,6 +74,7 @@ import {
 
 import { NoteInsertHashButton } from '#components/autocomplete/NoteInsertHashButton';
 import { NoteTagAutocomplete } from '#components/autocomplete/NoteTagAutocomplete';
+import { TransferRateDetails } from '#components/currency/TransferRateDetails';
 import { MobileBackButton } from '#components/mobile/MobileBackButton';
 import {
   FieldLabel,
@@ -93,12 +95,14 @@ import {
 } from '#components/transactions/table/utils';
 import { useAccounts } from '#hooks/useAccounts';
 import { useCategories } from '#hooks/useCategories';
+import { useCurrencyFormatter } from '#hooks/useCurrencyFormatter';
 import { useDateFormat } from '#hooks/useDateFormat';
 import { useLocalPref } from '#hooks/useLocalPref';
 import { useLocationPermission } from '#hooks/useLocationPermission';
 import { useNavigate } from '#hooks/useNavigate';
 import { useNearbyPayees } from '#hooks/useNearbyPayees';
 import { usePayees } from '#hooks/usePayees';
+import { usePromptTransferAmounts } from '#hooks/usePromptTransferAmounts';
 import {
   SingleActiveEditFormProvider,
   useSingleActiveEditForm,
@@ -125,15 +129,25 @@ function getFieldName(transactionId: TransactionEntity['id'], field: string) {
   return `${field}-${transactionId}`;
 }
 
+function getAmountDecimalPlaces(
+  transaction: Pick<TransactionEntity, 'account'>,
+  accounts: readonly AccountEntity[],
+) {
+  return getStoredDecimalPlaces(
+    accounts.find(account => account.id === transaction.account)?.currency,
+  );
+}
+
 function serializeTransaction(
   transaction: TransactionEntity,
   dateFormat: string,
+  decimalPlaces = 2,
 ) {
   const { date, amount } = transaction;
   return {
     ...transaction,
     date: formatDate(parseISO(date), dateFormat),
-    amount: integerToAmount(amount || 0),
+    amount: integerToAmount(amount || 0, decimalPlaces),
   };
 }
 
@@ -141,6 +155,7 @@ function deserializeTransaction(
   transaction: TransactionEntity,
   originalTransaction: TransactionEntity | null,
   dateFormat: string,
+  decimalPlaces = 2,
 ) {
   const { amount, date: originalDate, ...realTransaction } = transaction;
 
@@ -174,7 +189,11 @@ function deserializeTransaction(
       monthUtils.currentDay();
   }
 
-  return { ...realTransaction, date, amount: amountToInteger(amount || 0) };
+  return {
+    ...realTransaction,
+    date,
+    amount: amountToInteger(amount || 0, decimalPlaces),
+  };
 }
 
 export function lookupName(items: CategoryEntity[], id?: CategoryEntity['id']) {
@@ -418,6 +437,8 @@ type ChildTransactionEditProps = {
     transaction: TransactionEntity,
   ) => AccountEntity | undefined;
   isOffBudget: boolean;
+  // The currency of the account, when it has one of its own
+  currencyCode?: string;
   isBudgetTransfer: (transaction: TransactionEntity) => boolean;
   onEditField: (
     id: TransactionEntity['id'],
@@ -444,6 +465,7 @@ const ChildTransactionEdit = forwardRef<
       getPayee,
       getTransferAccount,
       isOffBudget,
+      currencyCode,
       isBudgetTransfer,
       onEditField,
       onUpdate,
@@ -506,6 +528,7 @@ const ChildTransactionEdit = forwardRef<
             <FieldLabel title={t('Amount')} style={{ padding: 0 }} />
             <SplitAmountInput
               keyboardHeader={keyboardHeader}
+              currencyCode={currencyCode}
               disabled={
                 !!editingField &&
                 editingField !== getFieldName(transaction.id, 'amount')
@@ -615,7 +638,9 @@ type TransactionEditInnerProps = {
   payees: PayeeEntity[];
   dateFormat: string;
   transactions: TransactionEntity[];
-  onSave: (transactions: TransactionEntity[]) => void;
+  // The transactions as stored, before any edit; none while adding
+  savedTransactions: TransactionEntity[];
+  onSave: (transactions: TransactionEntity[]) => Promise<void>;
   onUpdate: <Field extends keyof TransactionEntity>(
     transaction: TransactionEntity,
     field: Field,
@@ -639,6 +664,7 @@ const TransactionEditInner = memo<TransactionEditInnerProps>(
     payees,
     dateFormat,
     transactions: unserializedTransactions,
+    savedTransactions,
     onSave,
     onUpdate,
     onDelete,
@@ -653,6 +679,11 @@ const TransactionEditInner = memo<TransactionEditInnerProps>(
     const { t } = useTranslation();
     const navigate = useNavigate();
     const dispatch = useDispatch();
+    const {
+      isEnabled: isMultiCurrencyEnabled,
+      isForeignCurrency,
+      getAccountCurrency,
+    } = useCurrencyFormatter();
     const [showHiddenCategories] = useLocalPref('budget.showHiddenCategories');
     const [upcomingLength = DEFAULT_UPCOMING_SCHEDULE_DAYS] = useSyncedPref(
       'upcomingScheduledTransactionLength',
@@ -660,9 +691,13 @@ const TransactionEditInner = memo<TransactionEditInnerProps>(
     const transactions = useMemo(
       () =>
         unserializedTransactions.map(t =>
-          serializeTransaction(t, dateFormat),
+          serializeTransaction(
+            t,
+            dateFormat,
+            getAmountDecimalPlaces(t, accounts),
+          ),
         ) || [],
-      [unserializedTransactions, dateFormat],
+      [unserializedTransactions, dateFormat, accounts],
     );
     const { data: { grouped: categoryGroups } = { grouped: [] } } =
       useCategories();
@@ -736,8 +771,18 @@ const TransactionEditInner = memo<TransactionEditInnerProps>(
       [categories, isBudgetTransfer, t],
     );
 
+    // Whether the page was left, e.g. with the back button, while a save
+    // was still asking about a transfer
+    const isPageLeft = useRef(false);
+    useEffect(
+      () => () => {
+        isPageLeft.current = true;
+      },
+      [],
+    );
+
     const onSaveInner = useCallback(async () => {
-      const onConfirmSave = () => {
+      const onConfirmSave = async () => {
         let transactionsToSave = unserializedTransactions;
         if (isAdding) {
           transactionsToSave = realizeTempTransactions(
@@ -745,8 +790,13 @@ const TransactionEditInner = memo<TransactionEditInnerProps>(
           );
         }
 
-        onSave(transactionsToSave);
-        void navigate(-1);
+        // Asks how much arrived on the other side of a transfer between
+        // currencies before leaving the page. Leaving it meanwhile still
+        // saves, without going back once more.
+        await onSave(transactionsToSave);
+        if (!isPageLeft.current) {
+          void navigate(-1);
+        }
       };
 
       if (unserializedTransactions.some(t => t.reconciled)) {
@@ -759,7 +809,7 @@ const TransactionEditInner = memo<TransactionEditInnerProps>(
             modal: {
               name: 'confirm-transaction-edit',
               options: {
-                onConfirm: onConfirmSave,
+                onConfirm: () => void onConfirmSave(),
                 confirmReason: 'editReconciled',
               },
             },
@@ -785,17 +835,17 @@ const TransactionEditInner = memo<TransactionEditInnerProps>(
                 modal: {
                   name: 'confirm-transaction-edit',
                   options: {
-                    onConfirm: onConfirmSave,
+                    onConfirm: () => void onConfirmSave(),
                     confirmReason: 'batchEditWithReconciledTransfer',
                   },
                 },
               }),
             );
           } else {
-            onConfirmSave();
+            await onConfirmSave();
           }
         } else {
-          onConfirmSave();
+          await onConfirmSave();
         }
       }
     }, [isAdding, dispatch, navigate, onSave, unserializedTransactions]);
@@ -1186,6 +1236,29 @@ const TransactionEditInner = memo<TransactionEditInnerProps>(
 
     const account = getAccount(transaction);
     const isOffBudget = account ? !!account.offbudget : false;
+    const accountCurrency = account ? getAccountCurrency(account) : null;
+    // The transfer as saved: its details are hidden while the account or
+    // payee is changed, as they would describe a transfer about to change
+    const [savedTransaction] = savedTransactions;
+    const savedAccount = savedTransaction
+      ? getAccount(savedTransaction)
+      : undefined;
+    const savedTransferAccount = savedTransaction
+      ? getTransferAccount(savedTransaction)
+      : undefined;
+    const isCrossCurrencyTransfer =
+      isMultiCurrencyEnabled &&
+      !!savedTransaction?.transfer_id &&
+      savedTransaction.account === transaction.account &&
+      savedTransaction.payee === transaction.payee &&
+      !!savedAccount &&
+      !!savedTransferAccount &&
+      getAccountCurrency(savedAccount) !==
+        getAccountCurrency(savedTransferAccount);
+    const amountLabel =
+      accountCurrency && isForeignCurrency(accountCurrency)
+        ? t('Amount ({{currency}})', { currency: accountCurrency })
+        : t('Amount');
     const title = getPrettyPayee({
       t,
       transaction,
@@ -1243,9 +1316,10 @@ const TransactionEditInner = memo<TransactionEditInnerProps>(
               alignItems: 'center',
             }}
           >
-            <FieldLabel title={t('Amount')} flush style={{ marginBottom: 0 }} />
+            <FieldLabel title={amountLabel} flush style={{ marginBottom: 0 }} />
             <AmountInput
               value={transaction.amount}
+              currencyCode={account?.currency ?? undefined}
               negate
               disabled={
                 !!editingField &&
@@ -1361,6 +1435,25 @@ const TransactionEditInner = memo<TransactionEditInnerProps>(
                 )
               }
             />
+            {isCrossCurrencyTransfer &&
+              savedAccount &&
+              savedTransferAccount && (
+                <View
+                  style={{
+                    marginTop: 6,
+                    marginLeft: styles.mobileEditingPadding,
+                    marginRight: styles.mobileEditingPadding,
+                    color: theme.pageTextLight,
+                    fontSize: 13,
+                  }}
+                >
+                  <TransferRateDetails
+                    transaction={savedTransaction}
+                    account={savedAccount}
+                    transferAccount={savedTransferAccount}
+                  />
+                </View>
+              )}
           </View>
 
           {!transaction.is_parent && (
@@ -1404,6 +1497,7 @@ const TransactionEditInner = memo<TransactionEditInnerProps>(
                 };
               }}
               isOffBudget={isOffBudget}
+              currencyCode={account?.currency ?? undefined}
               getCategory={getCategory}
               getPayee={getPayee}
               getTransferAccount={getTransferAccount}
@@ -1624,6 +1718,7 @@ function TransactionEditUnconnected({
   const isDeleted = useRef(false);
   const [learnCategories = 'true'] = useSyncedPref('learn-categories');
   const isLearnCategoriesEnabled = String(learnCategories) === 'true';
+  const promptTransferAmounts = usePromptTransferAmounts();
 
   const searchParamCategory = useMemo(
     () => categories.find(c => c.name === searchParams.get('category'))?.id,
@@ -1744,6 +1839,7 @@ function TransactionEditUnconnected({
         serializedTransaction,
         null,
         dateFormat,
+        getAmountDecimalPlaces(serializedTransaction, accounts),
       );
 
       // Run the rules to auto-fill in any data. Right now we only do
@@ -1896,7 +1992,7 @@ function TransactionEditUnconnected({
         }
       }
     },
-    [dateFormat, isLocationGranted],
+    [dateFormat, isLocationGranted, accounts],
   );
 
   const onSave = useCallback(
@@ -1911,11 +2007,19 @@ function TransactionEditUnconnected({
         changes.updated.length > 0 ||
         changes.deleted.length
       ) {
+        const changedIds = new Set(
+          [...changes.added, ...changes.updated].map(t => t.id),
+        );
+        const transferAmounts = await promptTransferAmounts(
+          newTransactions.filter(t => changedIds.has(t.id)),
+          fetchedTransactions || [],
+        );
         const _remoteUpdates = await send('transactions-batch-update', {
           added: changes.added,
           deleted: changes.deleted,
           updated: changes.updated,
           learnCategories: isLearnCategoriesEnabled,
+          transferAmounts,
         });
 
         // if (onTransactionsChange) {
@@ -1932,7 +2036,12 @@ function TransactionEditUnconnected({
         dispatch(setLastTransaction({ transaction: newTransactions[0] }));
       }
     },
-    [dispatch, fetchedTransactions, isLearnCategoriesEnabled],
+    [
+      dispatch,
+      fetchedTransactions,
+      isLearnCategoriesEnabled,
+      promptTransferAmounts,
+    ],
   );
 
   const onDelete = useCallback(
@@ -2005,11 +2114,15 @@ function TransactionEditUnconnected({
     }
 
     const updated = {
-      ...serializeTransaction(transaction, dateFormat),
+      ...serializeTransaction(
+        transaction,
+        dateFormat,
+        getAmountDecimalPlaces(transaction, accounts),
+      ),
       payee: nearestPayee.id,
     };
     void onUpdate(updated, 'payee');
-  }, [transactions, nearestPayee, onUpdate, dateFormat]);
+  }, [transactions, nearestPayee, onUpdate, dateFormat, accounts]);
 
   if (accounts.length === 0) {
     return (
@@ -2126,6 +2239,7 @@ function TransactionEditUnconnected({
     >
       <TransactionEditInner
         transactions={transactions}
+        savedTransactions={fetchedTransactions}
         isAdding={isAdding.current}
         categories={categories}
         accounts={accounts}

@@ -12,11 +12,14 @@ import { FocusableAmountInput } from './FocusableAmountInput';
 
 export type AmountInputProps = Omit<CalculatorAmountInputProps, 'onFocus'> & {
   disableNativeAutoFocusOnIOS?: boolean;
+  // The currency of the account, when it has one of its own
+  currencyCode?: string;
   onFocus?: (event?: FocusEvent<HTMLInputElement>) => void;
 };
 
 export const AmountInput = memo(function AmountInput({
   autoFocus = false,
+  currencyCode,
   disableNativeAutoFocusOnIOS = false,
   disabled,
   inputRef,
@@ -62,6 +65,7 @@ export const AmountInput = memo(function AmountInput({
   return (
     <FocusableAmountInput
       {...props}
+      currencyCode={currencyCode}
       disabled={disabled}
       focused={focused}
       inputRef={inputRef}

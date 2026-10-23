@@ -49,6 +49,18 @@ describe('split parent formula context', () => {
     });
   });
 
+  test('uses the decimal places of the account currency', () => {
+    const yenParent = {
+      ...parent,
+      amount: -1500,
+      _account: { id: 'source-account', currency: 'JPY' },
+    };
+
+    expect(splitRule('=parent_amount + 100').exec(yenParent)).toMatchObject({
+      subtransactions: [{ amount: -1400 }, { amount: -100 }],
+    });
+  });
+
   test('reads parent notes independently of child notes', () => {
     expect(
       splitRule('=IF(parent_notes="' + parent.notes + '", -1, -2)').exec(

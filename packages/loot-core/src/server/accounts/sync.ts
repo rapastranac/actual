@@ -8,6 +8,10 @@ import { aqlQuery } from '#server/aql';
 import * as db from '#server/db';
 import { TRANSACTION_SORT_INCREMENT } from '#server/db/sort';
 import { TransactionError } from '#server/errors';
+import {
+  fromTwoDecimalPlaces,
+  getAccountDecimalPlaces,
+} from '#server/fx/decimals';
 import { runMutator } from '#server/mutators';
 import { post } from '#server/post';
 import { getServer } from '#server/server-config';
@@ -513,6 +517,7 @@ async function normalizeTransactions(
 
 async function normalizeBankSyncTransactions(transactions, acctId) {
   const payeesToCreate = new Map();
+  const decimalPlaces = await getAccountDecimalPlaces(acctId);
 
   const [customMappingsRaw, importPending, importNotes] = await Promise.all([
     aqlQuery(
@@ -582,7 +587,7 @@ async function normalizeBankSyncTransactions(transactions, acctId) {
     normalized.push({
       payee_name: payeeName,
       trans: {
-        amount: amountToInteger(trans.amount),
+        amount: amountToInteger(trans.amount, decimalPlaces),
         payee: trans.payee,
         account: trans.account,
         date,
@@ -655,6 +660,7 @@ export async function reconcileTransactions(
   const added = [];
   const updatedPreview = [];
   const existingPayeeMap = new Map<string, string>();
+  const decimalPlaces = await getAccountDecimalPlaces(acctId);
 
   const {
     payeesToCreate,
@@ -723,7 +729,7 @@ export async function reconcileTransactions(
           existingPayeeMap.set(existing.payee, payee?.name);
         }
         existing.payee_name = existingPayeeMap.get(existing.payee);
-        existing.amount = integerToAmount(existing.amount);
+        existing.amount = integerToAmount(existing.amount, decimalPlaces);
         updatedPreview.push({ transaction: trans, existing });
       } else {
         updatedPreview.push({ transaction: trans, ignored: true });
@@ -1191,6 +1197,11 @@ async function processBankSyncDownload(
     }
 
     const payee = await getStartingBalancePayee();
+    // Balances are reported with two decimal places
+    balanceToUse = fromTwoDecimalPlaces(
+      balanceToUse,
+      await getAccountDecimalPlaces(id),
+    );
 
     return runMutator(async () => {
       const initialId = await db.insertTransaction({
@@ -1232,7 +1243,11 @@ async function processBankSyncDownload(
     );
 
     if (currentBalance != null) {
-      await updateAccountBalance(id, currentBalance);
+      // Balances are reported with two decimal places
+      await updateAccountBalance(
+        id,
+        fromTwoDecimalPlaces(currentBalance, await getAccountDecimalPlaces(id)),
+      );
     }
 
     return result;

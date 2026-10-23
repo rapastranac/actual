@@ -53,6 +53,8 @@ function execSplitActions(actions: Action[], transaction) {
       transaction.payee ?? '';
     newTransactions[splitTransactionIndex].parent_account =
       transaction.account ?? '';
+    // Formulas need the account to use the decimal places of its currency
+    newTransactions[splitTransactionIndex]._account = transaction._account;
     newTransactions[splitTransactionIndex].balance = transaction.balance;
     newTransactions[splitTransactionIndex]._balanceOfPrefetched =
       transaction._balanceOfPrefetched;

@@ -24,6 +24,7 @@ import { theme } from '@actual-app/components/theme';
 import { View } from '@actual-app/components/view';
 import { send } from '@actual-app/core/platform/client/connection';
 import type { ParseFileOptions } from '@actual-app/core/server/transactions/import/parse-file';
+import { getStoredDecimalPlaces } from '@actual-app/core/shared/fx/currency';
 import { amountToInteger } from '@actual-app/core/shared/util';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -35,6 +36,7 @@ import { Modal, ModalCloseButton, ModalHeader } from '#components/common/Modal';
 import { SectionLabel } from '#components/forms';
 import { LabeledCheckbox } from '#components/forms/LabeledCheckbox';
 import { TableHeader, TableWithNavigator } from '#components/table';
+import { useAccount } from '#hooks/useAccount';
 import { useCategories } from '#hooks/useCategories';
 import { useDateFormat } from '#hooks/useDateFormat';
 import { useSyncedPrefs } from '#hooks/useSyncedPrefs';
@@ -210,6 +212,9 @@ export function ImportTransactionsModal({
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const dateFormat = useDateFormat() || ('MM/dd/yyyy' as const);
+  const importAccount = useAccount(accountId);
+  // Accounts with their own currency store amounts with its decimal places
+  const amountDecimalPlaces = getStoredDecimalPlaces(importAccount?.currency);
   const [prefs, savePrefs] = useSyncedPrefs();
   const { data: { list: categories } = { list: [] } } = useCategories();
 
@@ -366,14 +371,14 @@ export function ImportTransactionsModal({
           ...finalTransaction,
           category: category_id,
           date,
-          amount: amountToInteger(amount),
+          amount: amountToInteger(amount, amountDecimalPlaces),
           cleared: clearOnImport,
         });
       }
 
       return previewTransactions;
     },
-    [categories, clearOnImport],
+    [categories, clearOnImport, amountDecimalPlaces],
   );
 
   const parse = useCallback(
@@ -715,7 +720,7 @@ export function ImportTransactionsModal({
         ...finalTransaction,
         category: category_id,
         date,
-        amount: amountToInteger(amount),
+        amount: amountToInteger(amount, amountDecimalPlaces),
         cleared: clearOnImport,
         notes: importNotes ? finalTransaction.notes : null,
       });
