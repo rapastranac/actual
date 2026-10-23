@@ -216,4 +216,43 @@ describe('CurrencySettings', () => {
       ),
     ).toBeInTheDocument();
   });
+
+  it('turns automatic exchange rate updates on', async () => {
+    renderSettings();
+
+    await userEvent.click(
+      screen.getByRole('checkbox', {
+        name: 'Update exchange rates automatically',
+      }),
+    );
+
+    expect(mockSetPref).toHaveBeenCalledWith(
+      'exchange-rates-auto-update',
+      'true',
+    );
+  });
+
+  it('only saves a Frankfurter server address that is a web address', async () => {
+    renderSettings();
+    const input = screen.getByRole('textbox', {
+      name: 'Frankfurter server address',
+    });
+
+    await userEvent.type(input, 'rates.example.com');
+    fireEvent.blur(input);
+    expect(
+      screen.getByText(
+        'Enter an address that starts with https:// or http://.',
+      ),
+    ).toBeInTheDocument();
+    expect(mockSetPref).not.toHaveBeenCalled();
+
+    await userEvent.clear(input);
+    await userEvent.type(input, 'https://rates.example.com');
+    fireEvent.blur(input);
+    expect(mockSetPref).toHaveBeenCalledWith(
+      'exchange-rates-provider-url',
+      'https://rates.example.com',
+    );
+  });
 });
