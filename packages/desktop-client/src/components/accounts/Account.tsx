@@ -646,7 +646,9 @@ class AccountInternal extends PureComponent<
     this.setState({ search: value }, this.onSearchDone);
   };
 
-  onSearchDone = debounce(() => {
+  onSearchDone = debounce(() => this.applySearch(), 150);
+
+  applySearch = () => {
     if (this.state.search === '') {
       this.updateQuery(
         this.currentQuery,
@@ -662,7 +664,7 @@ class AccountInternal extends PureComponent<
         true,
       );
     }
-  }, 150);
+  };
 
   onSync = async () => {
     const accountId = this.props.accountId;
@@ -887,7 +889,8 @@ class AccountInternal extends PureComponent<
       | 'toggle-reconciled'
       | 'toggle-net-worth-chart'
       | 'manage-columns'
-      | 'account-group',
+      | 'account-group'
+      | 'account-settings',
   ) => {
     const accountId = this.props.accountId!;
     const account = this.props.accounts.find(
@@ -938,6 +941,18 @@ class AccountInternal extends PureComponent<
           }),
         );
         break;
+      case 'account-settings':
+        this.props.dispatch(
+          pushModal({
+            modal: {
+              name: 'account-settings',
+              options: {
+                accountId,
+              },
+            },
+          }),
+        );
+        break;
       case 'reopen':
         this.props.onReopenAccount(accountId);
         break;
@@ -959,19 +974,12 @@ class AccountInternal extends PureComponent<
         });
         break;
       }
-      case 'toggle-reconciled':
-        if (this.state.showReconciled) {
-          this.props.setShowReconciled(false);
-          this.setState({ showReconciled: false }, () =>
-            this.fetchTransactions(this.state.filterConditions),
-          );
-        } else {
-          this.props.setShowReconciled(true);
-          this.setState({ showReconciled: true }, () =>
-            this.fetchTransactions(this.state.filterConditions),
-          );
-        }
+      case 'toggle-reconciled': {
+        const showReconciled = !this.state.showReconciled;
+        this.props.setShowReconciled(showReconciled);
+        this.setState({ showReconciled }, this.applySearch);
         break;
+      }
       case 'toggle-net-worth-chart':
         if (this.props.showNetWorthChart) {
           this.props.setShowNetWorthChart(false);
@@ -1805,36 +1813,46 @@ class AccountInternal extends PureComponent<
   onSort = (headerClicked: string, ascDesc: 'asc' | 'desc') => {
     let prevField: string | undefined;
     let prevAscDesc: 'asc' | 'desc' | undefined;
+    // Query once the new sort is in state: whether running balances can be
+    // shown, and so whether hidden reconciled transactions are loaded,
+    // depends on it.
+    const sortAndSearch = () => {
+      this.applySort(headerClicked, ascDesc, prevField, prevAscDesc);
+      if (this.state.search !== '') {
+        this.onSearch(this.state.search);
+      }
+    };
     //if staying on same column but switching asc/desc
     //then keep prev the same
     if (headerClicked === this.state.sort?.field) {
       prevField = this.state.sort.prevField;
       prevAscDesc = this.state.sort.prevAscDesc;
-      this.setState(state => ({
-        sort: {
-          ...state.sort,
-          field: headerClicked,
-          ascDesc,
-        },
-      }));
+      this.setState(
+        state => ({
+          sort: {
+            ...state.sort,
+            field: headerClicked,
+            ascDesc,
+          },
+        }),
+        sortAndSearch,
+      );
     } else {
       //if switching to new column then capture state
       //of current sort column as prev
       prevField = this.state.sort?.field;
       prevAscDesc = this.state.sort?.ascDesc;
-      this.setState(state => ({
-        sort: {
-          field: headerClicked,
-          ascDesc,
-          prevField: state.sort?.field,
-          prevAscDesc: state.sort?.ascDesc,
-        },
-      }));
-    }
-
-    this.applySort(headerClicked, ascDesc, prevField, prevAscDesc);
-    if (this.state.search !== '') {
-      this.onSearch(this.state.search);
+      this.setState(
+        state => ({
+          sort: {
+            field: headerClicked,
+            ascDesc,
+            prevField: state.sort?.field,
+            prevAscDesc: state.sort?.ascDesc,
+          },
+        }),
+        sortAndSearch,
+      );
     }
   };
 
@@ -1938,6 +1956,7 @@ class AccountInternal extends PureComponent<
                 showEmptyMessage={showEmptyMessage ?? false}
                 balanceQuery={balanceQuery}
                 filteredAmount={filteredAmount}
+                filteredQuery={this.paged?.query ?? null}
                 isFiltered={transactionsFiltered ?? false}
                 isSorted={this.state.sort !== null}
                 reconcileAmount={reconcileAmount}
