@@ -17,15 +17,17 @@ import type {
   SimpleTemplate,
   SpendTemplate,
   Template,
+  WeeklyAverageTemplate,
 } from '#types/models/templates';
 
 import {
   getCategoryAverage,
+  getCategoryWeeklyAverage,
   getSheetBoolean,
   getSheetValue,
   isTrackingBudget,
 } from './actions';
-import { runSchedule } from './schedule-template';
+import { runScheduleForecast } from './schedule-template';
 import { getActiveSchedules } from './statements';
 
 export class CategoryTemplateContext {
@@ -150,7 +152,6 @@ export class CategoryTemplateContext {
     let toBudget = 0;
     const perTemplateLocal = new Map<Template, number>();
     let byFlag = false;
-    let remainder = 0;
     let scheduleFlag = false;
     let schedulePerTemplate: Map<ScheduleTemplate, number> | null = null;
     let byPerTemplate: Map<ByTemplate, number> | null = null;
@@ -201,26 +202,23 @@ export class CategoryTemplateContext {
         case 'schedule': {
           if (!scheduleFlag) {
             const budgeted = this.fromLastMonth + toBudget;
-            const ret = await runSchedule(
+            const ret = await runScheduleForecast(
               t,
               this.month,
               budgeted,
-              remainder,
-              this.fromLastMonth,
               toBudget,
-              [],
               this.category,
             );
             // Schedules assume that its to budget value is the whole thing so this
             // needs to remove the previous funds so they aren't double counted
             newBudget = ret.to_budget - toBudget;
-            remainder = ret.remainder;
             schedulePerTemplate = ret.perScheduleMonthly;
             scheduleFlag = true;
           }
           break;
         }
-        case 'average': {
+        case 'average':
+        case 'weeklyAverage': {
           newBudget = await CategoryTemplateContext.runAverage(template, this);
           break;
         }
@@ -237,7 +235,7 @@ export class CategoryTemplateContext {
       );
     }
 
-    // `runBy` and `runSchedule` produce a single batch total per priority bucket
+    // `runBy` and `runScheduleForecast` produce a single batch total per priority bucket
     // and the loop above credits it to whichever sibling template ran first. For
     // per-template UI projections we want to split that batch across all the
     // sibling templates. The breakdown is approximate (equal split for schedule,
@@ -251,7 +249,7 @@ export class CategoryTemplateContext {
       return Math.max(0, byPerTemplate?.get(template) ?? 0);
     });
     // Schedules: weight by each schedule's actual monthly contribution as
-    // computed by runSchedule, so the per-row UI projection reflects the
+    // computed by runScheduleForecast, so the per-row UI projection reflects the
     // schedule's real cost rather than an equal split.
     redistributeBatch(perTemplateLocal, t, 'schedule', template => {
       if (template.type !== 'schedule') return 0;
@@ -858,15 +856,25 @@ export class CategoryTemplateContext {
     return Math.max(0, Math.round(monthlyIncome * (percent / 100)));
   }
 
+  // Monthly averages budget the average once. Weekly averages budget it once
+  // per occurrence of the template's weekday in the month, so a month with
+  // five Fridays gets five weeks' worth; adjustments apply per week.
   static async runAverage(
-    template: AverageTemplate,
+    template: AverageTemplate | WeeklyAverageTemplate,
     templateContext: CategoryTemplateContext,
   ): Promise<number> {
-    let average = await getCategoryAverage({
-      month: templateContext.month,
-      maxMonths: template.numMonths,
-      categoryId: templateContext.category.id,
-    });
+    const isWeekly = template.type === 'weeklyAverage';
+    let average = isWeekly
+      ? await getCategoryWeeklyAverage({
+          month: templateContext.month,
+          numWeeks: template.numWeeks,
+          categoryId: templateContext.category.id,
+        })
+      : await getCategoryAverage({
+          month: templateContext.month,
+          maxMonths: template.numMonths,
+          categoryId: templateContext.category.id,
+        });
     // negate as sheet value is cost ie negative
     if (average < 0) {
       average *= -1;
@@ -889,7 +897,13 @@ export class CategoryTemplateContext {
       }
     }
 
-    return Math.round(average);
+    const occurrences = isWeekly
+      ? monthUtils.countDayOfWeekInMonth(
+          templateContext.month,
+          monthUtils.WEEKDAYS.indexOf(template.weekday),
+        )
+      : 1;
+    return Math.round(average * occurrences);
   }
 
   static runBy(templateContext: CategoryTemplateContext): {
@@ -964,7 +978,7 @@ export class CategoryTemplateContext {
   }
 }
 
-// `runBy` and `runSchedule` are batched: they compute a single budget number
+// `runBy` and `runScheduleForecast` are batched: they compute a single budget number
 // for all sibling templates of the same type at a given priority, and the
 // caller loop credits that total to whichever template was iterated first.
 // Split the batch total across all siblings using `weightOf` so the

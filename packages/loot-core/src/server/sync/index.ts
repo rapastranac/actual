@@ -17,15 +17,16 @@ import {
 } from '#server/budget/base';
 import * as db from '#server/db';
 import { PostError, SyncError } from '#server/errors';
+import { updateSqlConversionState } from '#server/fx/sqlState';
 import { app } from '#server/main-app';
-import { runMutator } from '#server/mutators';
+import { flushRunningMutators, runMutator } from '#server/mutators';
 import { postBinary } from '#server/post';
 import * as prefs from '#server/prefs';
 import { getServer } from '#server/server-config';
 import * as sheet from '#server/sheet';
 import { resolveName } from '#server/spreadsheet/util';
 import * as undo from '#server/undo';
-import { once, sequential } from '#shared/async';
+import { sequential } from '#shared/async';
 import { isMissingSchemaError } from '#shared/errors';
 import { getIn, setIn } from '#shared/util';
 import type { MetadataPrefs } from '#types/prefs';
@@ -569,6 +570,10 @@ async function _applyMessages(messages: Message[], isReceived = false) {
     connection.send('prefs-updated');
   }
 
+  // Budget and report queries convert with the rates; they must see the
+  // new ones before reacting to this change
+  updateSqlConversionState(newData);
+
   // In testing, sometimes the spreadsheet isn't loaded, and that's ok
   if (sheet.get()) {
     // Need to clean up these APIs and make them consistent
@@ -825,10 +830,36 @@ export async function initialFullSync(): Promise<{
   return {};
 }
 
-export const fullSync = once(async function (): Promise<
+type FullSyncResult =
   | { messages: Message[] }
-  | { error: { message: string; reason: string; meta: unknown } }
-> {
+  | { error: { message: string; reason: string; meta: unknown } };
+
+let runningFullSync: Promise<FullSyncResult> | null = null;
+let isFullSyncStopped = false;
+export function fullSync(): Promise<FullSyncResult> {
+  if (isFullSyncStopped) {
+    return Promise.resolve({ messages: [] });
+  }
+  runningFullSync ??= runFullSync().finally(() => {
+    runningFullSync = null;
+  });
+  return runningFullSync;
+}
+
+// Stops new syncs, then waits for the running sync and all queued mutators so
+// the budget can be closed.
+export async function stopFullSync(): Promise<void> {
+  isFullSyncStopped = true;
+  clearFullSyncTimeout();
+  await Promise.allSettled([runningFullSync]);
+  await flushRunningMutators();
+}
+
+export function resumeFullSync(): void {
+  isFullSyncStopped = false;
+}
+
+async function runFullSync(): Promise<FullSyncResult> {
   app.events.emit('sync', { type: 'start' });
   let messages;
 
@@ -899,7 +930,7 @@ export const fullSync = once(async function (): Promise<
     syncDisabled: checkSyncingMode('disabled'),
   });
   return { messages };
-});
+}
 
 async function _fullSync(
   sinceTimestamp: string,

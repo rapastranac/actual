@@ -12,7 +12,10 @@ import {
   splitTransaction,
   updateTransaction,
 } from '@actual-app/core/shared/transactions';
-import { integerToCurrency } from '@actual-app/core/shared/util';
+import {
+  integerToCurrency,
+  setNumberFormat,
+} from '@actual-app/core/shared/util';
 import type {
   AccountEntity,
   CategoryEntity,
@@ -37,9 +40,11 @@ import { v4 as uuidv4 } from 'uuid';
 
 import { AuthProvider } from '#auth/AuthProvider';
 import { SchedulesProvider } from '#hooks/useCachedSchedules';
+import { useFeatureFlag } from '#hooks/useFeatureFlag';
 import { SelectedProviderWithItems } from '#hooks/useSelected';
 import { SplitsExpandedProvider } from '#hooks/useSplitsExpanded';
 import { SpreadsheetProvider } from '#hooks/useSpreadsheet';
+import { useSyncedPref } from '#hooks/useSyncedPref';
 import { createTestQueryClient, TestProviders } from '#mocks';
 import * as modalsSlice from '#modals/modalsSlice';
 import { payeeQueries } from '#payees';
@@ -657,6 +662,71 @@ describe('Transactions', () => {
     });
   });
 
+  test('shows amounts of an account with its own currency as usual while multiple currencies are off', () => {
+    const { container } = renderTransactions({
+      accounts: [{ ...accounts[0], currency: 'JPY' }],
+    });
+
+    expect(queryField(container, 'debit', 'div', 0).textContent).toBe(
+      integerToCurrency(2777),
+    );
+  });
+
+  describe('with an account in another currency', () => {
+    // A budget in yen, whose decimals are hidden, with an account in dollars
+    const prefs: Record<string, string> = {
+      defaultCurrencyCode: 'JPY',
+      hideFraction: 'true',
+    };
+
+    beforeEach(() => {
+      vi.mocked(useFeatureFlag).mockImplementation(
+        flag => flag === 'currency' || flag === 'multiCurrency',
+      );
+      vi.mocked(useSyncedPref).mockImplementation(((name: string) => [
+        prefs[name],
+        vi.fn(),
+      ]) as typeof useSyncedPref);
+    });
+
+    afterEach(() => {
+      // The budget's format is applied globally while it renders
+      setNumberFormat({ format: 'comma-dot', hideFraction: false });
+      vi.mocked(useFeatureFlag).mockImplementation(() => false);
+      vi.mocked(useSyncedPref).mockImplementation(((): unknown => [
+        undefined,
+        vi.fn(),
+      ]) as typeof useSyncedPref);
+    });
+
+    test('shows the amount left of a split in the currency of its account', async () => {
+      const { container, updateProps } = renderTransactions({
+        accounts: [{ ...accounts[0], currency: 'USD' }],
+      });
+      updateProps({ isAdding: true });
+
+      let input = await editNewField(container, 'debit');
+      await userEvent.clear(input);
+      await userEvent.type(input, '15.26');
+
+      await editNewField(container, 'category');
+      await userEvent.click(screen.getByTestId('split-transaction-button'));
+      await waitForAutocomplete();
+      await waitForAutocomplete();
+      await waitForAutocomplete();
+
+      input = await editNewField(container, 'debit', 1);
+      await userEvent.clear(input);
+      await userEvent.type(input, '10.00');
+      await userEvent.tab();
+
+      expect(
+        container.querySelector('[data-testid="transaction-error"]')
+          ?.textContent,
+      ).toContain('Amount left: ‪USD$‬5.26');
+    });
+  });
+
   describe('Group column', () => {
     test('group column is hidden by default', () => {
       const { container } = renderTransactions();
@@ -773,6 +843,34 @@ describe('Transactions', () => {
     await userEvent.type(input, '[Escape]');
     expect(input.value).toEqual(oldValue);
   });
+
+  test.each(['debit', 'credit'] as const)(
+    'invalid arithmetic in %s preserves the amount and allows correction',
+    async field => {
+      const onTransactionsChange = vi.fn();
+      const { container } = renderTransactions({ onTransactionsChange });
+      const input = await editField(container, field, 0);
+      await userEvent.clear(input);
+      await userEvent.type(input, '1/0[Tab]');
+
+      expect(onTransactionsChange).toHaveBeenLastCalledWith(
+        expect.arrayContaining([expect.objectContaining({ amount: -2777 })]),
+      );
+      expect(queryField(container, 'debit', 'div', 0).textContent).toBe(
+        '27.77',
+      );
+      expect(queryField(container, 'credit', '', 0).textContent).toBe('');
+
+      const correctedInput = await editField(container, field, 0);
+      await userEvent.clear(correctedInput);
+      await userEvent.type(correctedInput, '12/2[Tab]');
+      expect(onTransactionsChange).toHaveBeenLastCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ amount: field === 'debit' ? -600 : 600 }),
+        ]),
+      );
+    },
+  );
 
   test('text fields save when moved away from', async () => {
     const { container, getTransactions } = renderTransactions();

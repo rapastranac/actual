@@ -1,7 +1,10 @@
+import { matchPath, useLocation } from 'react-router';
+
 import type { SyncedPrefs } from '@actual-app/core/types/prefs';
 
 import {
   getSidebarMenuItemPath,
+  isSettingsSection,
   parseSidebarMenuItems,
   parseSidebarStartPage,
 } from '#components/sidebar/sidebarMenu';
@@ -10,6 +13,7 @@ import type {
   SidebarMenuItemId,
 } from '#components/sidebar/sidebarMenu';
 import { useIsTestEnv } from '#hooks/useIsTestEnv';
+import { useMultiCurrency } from '#hooks/useMultiCurrency';
 import { useSyncedPref } from '#hooks/useSyncedPref';
 import { useSyncServerStatus } from '#hooks/useSyncServerStatus';
 import { mergeSyncedPrefs, saveSyncedPrefs } from '#prefs/prefsSlice';
@@ -22,14 +26,32 @@ export function useSidebarMenu() {
   const syncServerStatus = useSyncServerStatus();
   const isTestEnv = useIsTestEnv();
   const isUsingServer = syncServerStatus !== 'no-server' || isTestEnv;
+  const { isEnabled: isMultiCurrencyEnabled } = useMultiCurrency();
 
-  const isItemAvailable = (id: SidebarMenuItemId) =>
-    id !== 'bank-sync' || isUsingServer;
+  const isItemAvailable = (id: SidebarMenuItemId) => {
+    switch (id) {
+      case 'bank-sync':
+        return isUsingServer;
+      case 'exchange-rates':
+        return isMultiCurrencyEnabled;
+      default:
+        return true;
+    }
+  };
 
   const items = parseSidebarMenuItems(itemsPref);
   const availableItems = items.filter(item => isItemAvailable(item.id));
-  const sidebarItems = availableItems.filter(item => !item.hidden);
-  const settingsItems = availableItems.filter(item => item.hidden);
+  // A hidden page with no settings page stays in the sidebar while it is open
+  const { pathname } = useLocation();
+  const isItemOpen = (id: SidebarMenuItemId) =>
+    matchPath(`/${id}/*`, pathname) !== null;
+  const sidebarItems = availableItems.filter(
+    item =>
+      !item.hidden || (!isSettingsSection(item.id) && isItemOpen(item.id)),
+  );
+  const settingsItems = availableItems.filter(
+    item => item.hidden && isSettingsSection(item.id),
+  );
 
   const startPage = parseSidebarStartPage(startPagePref, availableItems);
   const startPath = getSidebarMenuItemPath(

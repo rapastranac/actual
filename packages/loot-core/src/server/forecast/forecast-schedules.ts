@@ -3,6 +3,7 @@ import { format } from 'date-fns';
 import { aqlQuery } from '#server/aql';
 import * as db from '#server/db';
 import { runRules } from '#server/transactions/transaction-rules';
+import { convertTransferAmount } from '#shared/fx/sql';
 import * as monthUtils from '#shared/months';
 import { q } from '#shared/query';
 import {
@@ -12,6 +13,7 @@ import {
   indexPostedScheduleTransactions,
   isScheduleOccurrencePosted,
 } from '#shared/schedules';
+import type { PostedScheduleTransaction } from '#shared/schedules';
 import type { RuleConditionEntity, TransactionEntity } from '#types/models';
 import type { RecurConfig } from '#types/models/schedule';
 
@@ -67,6 +69,7 @@ export type ForecastScheduleOccurrence = {
   payee: string;
   scheduleId: string;
   scheduleName: string;
+  occurrenceDate: string;
 };
 
 async function getSchedules() {
@@ -115,6 +118,24 @@ export async function getNormalizedSchedules() {
     const normalizedSchedule = normalizeSchedule(schedule);
     return normalizedSchedule ? [normalizedSchedule] : [];
   });
+}
+
+export async function getPostedScheduleTransactions(schedules: ScheduleData[]) {
+  if (schedules.length === 0) {
+    return [];
+  }
+  // Posting is independent of the report filters or which transfer leg is visible.
+  // Include split parents because they can hold the schedule link.
+  const { data } = await aqlQuery(
+    q('transactions')
+      .filter({
+        tombstone: false,
+        schedule: { $oneof: schedules.map(schedule => schedule.id) },
+      })
+      .select(['schedule', 'date'])
+      .options({ splits: 'all' }),
+  );
+  return data;
 }
 
 async function getTransferPayeesByAccountIds(accountIds: string[]) {
@@ -182,7 +203,7 @@ export async function buildFutureScheduleOccurrences(
   endDateObj: Date,
   accountsById: Map<string, AccountWithComputedBalance>,
   ruleAccountsById: Map<string, DbAccountForRules>,
-  postedTransactions: TransactionEntity[],
+  postedTransactions: PostedScheduleTransaction[],
 ) {
   const postedByScheduleId =
     indexPostedScheduleTransactions(postedTransactions);
@@ -197,10 +218,11 @@ export async function buildFutureScheduleOccurrences(
     amount: number;
     scheduleId: string;
     scheduleName: string;
+    occurrenceDate: string;
   }> = [];
 
   for (const schedule of schedules) {
-    const scheduleName = schedule.name ?? 'Unknown';
+    const scheduleName = schedule.name ?? '';
 
     for (const date of getFutureOccurrenceDates(schedule, endDateObj)) {
       if (
@@ -234,6 +256,7 @@ export async function buildFutureScheduleOccurrences(
         amount: sourceTransaction.amount,
         scheduleId: schedule.id,
         scheduleName,
+        occurrenceDate: date,
       });
 
       if (sourceTransaction.account === FORECAST_UNASSIGNED_ACCOUNT_ID) {
@@ -265,7 +288,15 @@ export async function buildFutureScheduleOccurrences(
         {
           id: `${sourceTransaction.id}-transfer`,
           account: transferAccountId,
-          amount: -sourceTransaction.amount,
+          // Arrives in the currency of the other account, at the rate of
+          // the day as when the schedule is posted. Either account can be
+          // outside the forecast, so currencies come from all of them.
+          amount: convertTransferAmount(
+            -sourceTransaction.amount,
+            ruleAccountsById.get(sourceTransaction.account)?.currency,
+            ruleAccountsById.get(transferAccountId)?.currency,
+            sourceTransaction.date,
+          ),
           payee: reverseTransferPayee?.id ?? null,
           date: sourceTransaction.date,
           transfer_id: sourceTransaction.id,
@@ -296,6 +327,7 @@ export async function buildFutureScheduleOccurrences(
         amount: transferTransaction.amount,
         scheduleId: schedule.id,
         scheduleName,
+        occurrenceDate: date,
       });
     }
   }
@@ -325,6 +357,7 @@ export async function buildFutureScheduleOccurrences(
       payee: filterObject.payee?.name ?? occurrence.scheduleName,
       scheduleId: occurrence.scheduleId,
       scheduleName: occurrence.scheduleName,
+      occurrenceDate: occurrence.occurrenceDate,
     } satisfies ForecastScheduleOccurrence;
   });
 }

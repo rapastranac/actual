@@ -1,3 +1,4 @@
+import { CONVERTED_AMOUNT } from '@actual-app/core/shared/fx/aql';
 import { q } from '@actual-app/core/shared/query';
 import type { ObjectExpression } from '@actual-app/core/shared/query';
 
@@ -12,8 +13,10 @@ export function makeQuery(
   filters: unknown[],
   groupBy?: string,
 ) {
+  // Weekly and Quarterly have no AQL date transform, so they are queried at a
+  // finer grain (days and months) and rolled up by the spreadsheets.
   const intervalGroup =
-    interval === 'Monthly'
+    interval === 'Monthly' || interval === 'Quarterly'
       ? { $month: '$date' }
       : interval === 'Yearly'
         ? { $year: '$date' }
@@ -21,7 +24,10 @@ export function makeQuery(
   const intervalFilter =
     interval === 'Weekly'
       ? '$day'
-      : '$' + ReportOptions.intervalMap.get(interval)?.toLowerCase() || 'month';
+      : interval === 'Quarterly'
+        ? '$month'
+        : '$' + ReportOptions.intervalMap.get(interval)?.toLowerCase() ||
+          'month';
 
   const query = q('transactions')
     //Apply filters and split by "Group By"
@@ -58,7 +64,7 @@ export function makeQuery(
     { accountOffBudget: { $id: '$account.offbudget' } },
     { payee: { $id: '$payee.id' } },
     { transferAccount: { $id: '$payee.transfer_acct.id' } },
-    { amount: { $sum: '$amount' } },
+    { amount: { $sum: CONVERTED_AMOUNT } },
   ];
 
   if (groupBy === 'Tag') {

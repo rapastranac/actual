@@ -1,20 +1,21 @@
 import { addMonths, format } from 'date-fns';
 
+import { convertToDefaultCurrency } from '#shared/fx/sql';
 import * as monthUtils from '#shared/months';
 import type { TransactionEntity } from '#types/models';
-import type { ForecastDataPoint, ForecastResult } from '#types/models/forecast';
+import type {
+  ForecastDataPoint,
+  ForecastResult,
+  ForecastTransaction,
+} from '#types/models/forecast';
 
 import type { AccountWithComputedBalance } from './forecast-accounts';
 import { matchesForecastFilters } from './forecast-filters';
 import type { ForecastFilterInfo } from './forecast-filters';
 import type { ForecastScheduleOccurrence } from './forecast-schedules';
+import { FORECAST_UNASSIGNED_ACCOUNT_ID } from './forecast-schedules';
 
-type ScheduleOccurrenceSummary = {
-  amount: number;
-  payee: string;
-  scheduleId: string;
-  scheduleName: string;
-};
+type ScheduleOccurrenceSummary = ForecastTransaction;
 
 type ScheduleOccurrencesByAccount = Record<
   string,
@@ -134,6 +135,10 @@ export function indexScheduleOccurrences(
         payee: occurrence.payee,
         scheduleId: occurrence.scheduleId,
         scheduleName: occurrence.scheduleName,
+        occurrenceDate: occurrence.occurrenceDate,
+        isTransfer: occurrence.transaction.transfer_id != null,
+        isAccountless:
+          occurrence.transaction.account === FORECAST_UNASSIGNED_ACCOUNT_ID,
       },
     );
   }
@@ -189,6 +194,10 @@ function buildAccountForecastDataPoints(
   forecastDays: string[],
 ): ForecastDataPoint[] {
   let runningBalance = postedTransactions.startingBalance;
+  // The forecast adds accounts up, so amounts of accounts in another
+  // currency are shown in the default currency at the latest rate
+  const toDefaultCurrency = (amount: number) =>
+    convertToDefaultCurrency(amount, account.currency);
 
   return forecastDays.map(day => {
     const txDelta = postedTransactions.txsByDay[day] || 0;
@@ -198,14 +207,13 @@ function buildAccountForecastDataPoints(
 
     return {
       date: day,
-      balance: runningBalance,
+      balance: toDefaultCurrency(runningBalance),
       accountId: account.id,
       accountName: account.name,
+      recordedAmount: toDefaultCurrency(txDelta),
       transactions: scheduleTxns.map(scheduleTxn => ({
-        amount: scheduleTxn.amount,
-        payee: scheduleTxn.payee,
-        scheduleId: scheduleTxn.scheduleId,
-        scheduleName: scheduleTxn.scheduleName,
+        ...scheduleTxn,
+        amount: toDefaultCurrency(scheduleTxn.amount),
       })),
     };
   });
@@ -244,7 +252,9 @@ function calculateLowestBalance(
     return {
       date: forecastStartDate,
       balance: accounts.reduce(
-        (sum, account) => sum + account.balance_current,
+        (sum, account) =>
+          sum +
+          convertToDefaultCurrency(account.balance_current, account.currency),
         0,
       ),
       accountId: '',
